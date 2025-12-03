@@ -1,0 +1,15 @@
+[package]
+name = "wordle_kernel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[profile.kernel]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = false
+overflow-checks = false
+panic = "abort"
