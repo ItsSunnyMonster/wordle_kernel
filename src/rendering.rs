@@ -1,18 +1,32 @@
 use core::convert::Infallible;
 
-use embedded_graphics::{
-    Pixel,
-    pixelcolor::Rgb888,
-    prelude::{DrawTarget, OriginDimensions, RgbColor, Size},
-};
+use embedded_graphics::{Pixel, pixelcolor::Rgb888, prelude::*};
+use lazy_static::lazy_static;
 use limine::framebuffer::Framebuffer;
+use spin::Mutex;
+
+use crate::hcf;
+
+lazy_static! {
+    pub static ref FRAMEBUFFER: Mutex<FramebufferWriter<'static>> = {
+        if let Some(framebuffer_response) =
+            crate::limine_structs::FRAMEBUFFER_REQUEST.get_response()
+            && let Some(framebuffer) = framebuffer_response.framebuffers().next()
+        {
+            let writer = FramebufferWriter::new(framebuffer);
+            Mutex::new(writer)
+        } else {
+            hcf();
+        }
+    };
+}
 
 pub struct FramebufferWriter<'a> {
-    pub fb: &'a Framebuffer<'a>,
+    pub fb: Framebuffer<'a>,
 }
 
 impl<'a> FramebufferWriter<'a> {
-    pub fn new(framebuffer: &'a Framebuffer<'a>) -> Self {
+    pub fn new(framebuffer: Framebuffer<'a>) -> Self {
         Self { fb: framebuffer }
     }
 

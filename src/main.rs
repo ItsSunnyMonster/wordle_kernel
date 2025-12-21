@@ -10,7 +10,7 @@ use embedded_graphics::{
     text::Text,
 };
 
-use crate::{rendering::FramebufferWriter, util::InfallibleResultExt};
+use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
 
 mod limine_structs;
 mod rendering;
@@ -22,21 +22,19 @@ mod util;
 extern "C" fn kernel_main() -> ! {
     assert!(limine_structs::BASE_REVISION.is_supported());
 
-    if let Some(framebuffer_response) = limine_structs::FRAMEBUFFER_REQUEST.get_response()
-        && let Some(framebuffer) = framebuffer_response.framebuffers().next()
-    {
-        let mut writer = FramebufferWriter::new(&framebuffer);
-        writer.clear(Rgb888::new(24, 24, 37)).infallible();
-
-        let style = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb888::new(243, 139, 168));
-        Text::new(
-            "Hello World!\nThis is supposedly an error.",
-            Point::new(20, 30),
-            style,
-        )
-        .draw(&mut writer)
+    FRAMEBUFFER
+        .lock()
+        .clear(Rgb888::new(24, 24, 37))
         .infallible();
-    }
+
+    let style = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb888::new(243, 139, 168));
+    Text::new(
+        "Hello World!\nThis is supposedly an error.",
+        Point::new(20, 30),
+        style,
+    )
+    .draw(&mut *FRAMEBUFFER.lock())
+    .infallible();
 
     hcf();
 }
