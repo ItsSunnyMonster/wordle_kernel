@@ -4,7 +4,7 @@ build:
     @mkdir -p build
     @mkdir -p build/wordle
     
-    cargo +nightly build --profile=kernel -Z unstable-options --out-dir build/wordle
+    cargo +nightly build --profile=kernel -Z unstable-options --artifact-dir build/wordle
 
     ./build_limine.sh
     

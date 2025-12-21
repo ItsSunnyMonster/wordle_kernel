@@ -3,52 +3,18 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
-use limine::framebuffer::Framebuffer;
+use embedded_graphics::{
+    mono_font::{MonoTextStyle, ascii::FONT_9X18_BOLD},
+    pixelcolor::Rgb888,
+    prelude::*,
+    text::Text,
+};
+
+use crate::{rendering::FramebufferWriter, util::InfallibleResultExt};
 
 mod limine_structs;
-
-struct FramebufferWriter<'a> {
-    pub fb: &'a Framebuffer<'a>,
-}
-
-impl<'a> FramebufferWriter<'a> {
-    pub fn new(framebuffer: &'a Framebuffer<'a>) -> Self {
-        Self { fb: framebuffer }
-    }
-
-    fn write_pixel(&mut self, x: u64, y: u64, r: u8, g: u8, b: u8) {
-        assert!(x < self.fb.width());
-        assert!(y < self.fb.height());
-
-        let mut pixel_value = 0u32;
-
-        pixel_value |=
-            (r as u32 & ((1 << self.fb.red_mask_size()) - 1)) << self.fb.red_mask_shift();
-        pixel_value |=
-            (g as u32 & ((1 << self.fb.green_mask_size()) - 1)) << self.fb.green_mask_shift();
-        pixel_value |=
-            (b as u32 & ((1 << self.fb.blue_mask_size()) - 1)) << self.fb.blue_mask_shift();
-
-        let bytes_per_pixel = (self.fb.bpp() / 8) as u64;
-
-        // SAFETY: address is properly mapped and aligned.
-        // no concurrent writes since the function takes &mut self
-        unsafe {
-            // self.fb
-            //     .addr()
-            //     .add((y * self.fb.pitch() + x * bytes_per_pixel) as usize)
-            //     .cast::<u32>()
-            //     .write(pixel_value);
-            core::ptr::write_volatile(
-                self.fb
-                    .addr()
-                    .add((y * self.fb.pitch() + x * bytes_per_pixel) as usize)
-                    .cast::<u32>(),
-                pixel_value,
-            );
-        }
-    }
-}
+mod rendering;
+mod util;
 
 // SAFETY:  must have a stable, unmangled symbol because it is called by Limine.
 //          the ABI matches the expected System V calling convention.
@@ -60,11 +26,16 @@ extern "C" fn kernel_main() -> ! {
         && let Some(framebuffer) = framebuffer_response.framebuffers().next()
     {
         let mut writer = FramebufferWriter::new(&framebuffer);
-        for y in 0..framebuffer.height() {
-            for x in 0..framebuffer.width() {
-                writer.write_pixel(x, y, 203, 166, 247);
-            }
-        }
+        writer.clear(Rgb888::new(24, 24, 37)).infallible();
+
+        let style = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb888::new(243, 139, 168));
+        Text::new(
+            "Hello World!\nThis is supposedly an error.",
+            Point::new(20, 30),
+            style,
+        )
+        .draw(&mut writer)
+        .infallible();
     }
 
     hcf();
