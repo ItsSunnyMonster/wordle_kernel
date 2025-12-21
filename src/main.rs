@@ -3,17 +3,13 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
-use embedded_graphics::{
-    mono_font::{MonoTextStyle, ascii::FONT_9X18_BOLD},
-    pixelcolor::Rgb888,
-    prelude::*,
-    text::Text,
-};
+use embedded_graphics::{pixelcolor::Rgb888, prelude::*};
 
 use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
 
 mod limine_structs;
 mod rendering;
+mod text;
 mod util;
 
 // SAFETY:  must have a stable, unmangled symbol because it is called by Limine.
@@ -27,20 +23,20 @@ extern "C" fn kernel_main() -> ! {
         .clear(Rgb888::new(24, 24, 37))
         .infallible();
 
-    let style = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb888::new(243, 139, 168));
-    Text::new(
-        "Hello World!\nThis is supposedly an error.",
-        Point::new(20, 30),
-        style,
-    )
-    .draw(&mut *FRAMEBUFFER.lock())
-    .infallible();
+    eprintln!("Hello World!");
+    eprint!("This is supposedly an error :3");
+    eprintln!("");
 
-    hcf();
+    eprintln!(
+        "AHSGKFASDGLKHDKFSDHGLDKFJASGHLKFJKASLGHSDLFASKLGDFJAKSLGHKDLFJASKLGHSKDLFJAKLSGHKLFHJKSHGKLJDFKAHSGKLJDFAKLSHGKLDFGJHAKLSGHDKLJFKLASHGASDKLHKLSDJFKLASHDGLKJFKLDHKSLDHJFKLASHGKLJFKLASHDGKLJDFKLASHGKLDJFKLASHGDKLJFKLASHGDKLJFKLASHGDKLJHGKLASHGKLDJFKLASGHDKLHFGKLASGHKLDHGKLASDHFKLASJKLDGASKLDFAKLSDGKLFHAKLSDGKLDFHAKLSDGJKLFJKLSDHGKLFHJKLASDHGKLSDJF"
+    );
+
+    panic!("HOLY SHIT WE PANICKED!!!");
 }
 
 #[panic_handler]
-fn rust_panic(_info: &PanicInfo) -> ! {
+fn rust_panic(info: &PanicInfo) -> ! {
+    eprintln!("{}", info);
     hcf();
 }
 
