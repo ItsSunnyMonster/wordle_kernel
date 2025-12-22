@@ -72,7 +72,7 @@ macro_rules! eprint {
 #[macro_export]
 macro_rules! eprintln {
     () => (eprint!("\n"));
-    ($($arg:tt)*) => (eprint!("{}\n", format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::eprint!("{}\n", format_args!($($arg)*)));
 }
 
 #[doc(hidden)]

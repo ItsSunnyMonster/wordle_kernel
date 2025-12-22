@@ -1,12 +1,14 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 
-use core::{arch::asm, panic::PanicInfo};
+use core::panic::PanicInfo;
 
 use embedded_graphics::{pixelcolor::Rgb888, prelude::*};
 
-use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
+use crate::{interrupts::init_idt, rendering::FRAMEBUFFER, util::InfallibleResultExt};
 
+mod interrupts;
 mod limine_structs;
 mod rendering;
 mod text;
@@ -18,20 +20,21 @@ mod util;
 extern "C" fn kernel_main() -> ! {
     assert!(limine_structs::BASE_REVISION.is_supported());
 
+    init_idt();
+
     FRAMEBUFFER
         .lock()
         .clear(Rgb888::new(24, 24, 37))
         .infallible();
 
-    eprintln!("Hello World!");
-    eprint!("This is supposedly an error :3");
-    eprintln!("");
+    // UNSAFETY: intentional page fault to test interrupt handling.
+    unsafe {
+        *(0xdeadbeef as *mut u8) = 0x43;
+    }
 
-    eprintln!(
-        "AHSGKFASDGLKHDKFSDHGLDKFJASGHLKFJKASLGHSDLFASKLGDFJAKSLGHKDLFJASKLGHSKDLFJAKLSGHKLFHJKSHGKLJDFKAHSGKLJDFAKLSHGKLDFGJHAKLSGHDKLJFKLASHGASDKLHKLSDJFKLASHDGLKJFKLDHKSLDHJFKLASHGKLJFKLASHDGKLJDFKLASHGKLDJFKLASHGDKLJFKLASHGDKLJFKLASHGDKLJHGKLASHGKLDJFKLASGHDKLHFGKLASGHKLDHGKLASDHFKLASJKLDGASKLDFAKLSDGKLFHAKLSDGKLDFHAKLSDGJKLFJKLSDHGKLFHJKLASDHGKLSDJF"
-    );
+    eprintln!("Hello world!");
 
-    panic!("HOLY SHIT WE PANICKED!!!");
+    hcf();
 }
 
 #[panic_handler]
@@ -42,9 +45,6 @@ fn rust_panic(info: &PanicInfo) -> ! {
 
 fn hcf() -> ! {
     loop {
-        // SAFETY: the program is halted.
-        unsafe {
-            asm!("hlt");
-        }
+        x86_64::instructions::hlt();
     }
 }
