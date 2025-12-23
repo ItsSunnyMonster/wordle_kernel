@@ -6,8 +6,9 @@ use core::panic::PanicInfo;
 
 use embedded_graphics::{pixelcolor::Rgb888, prelude::*};
 
-use crate::{interrupts::init_idt, rendering::FRAMEBUFFER, util::InfallibleResultExt};
+use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
 
+mod gdt;
 mod interrupts;
 mod limine_structs;
 mod rendering;
@@ -20,17 +21,28 @@ mod util;
 extern "C" fn kernel_main() -> ! {
     assert!(limine_structs::BASE_REVISION.is_supported());
 
-    init_idt();
+    gdt::init();
+    interrupts::init_idt();
 
     FRAMEBUFFER
         .lock()
         .clear(Rgb888::new(24, 24, 37))
         .infallible();
 
-    // UNSAFETY: intentional page fault to test interrupt handling.
-    unsafe {
-        *(0xdeadbeef as *mut u8) = 0x43;
-    }
+    // // Trigger stack overflow
+    // #[allow(unconditional_recursion)]
+    // fn stack_overflow() {
+    //     stack_overflow();
+    //     unsafe {
+    //         core::ptr::read_volatile(&0);
+    //     }
+    // }
+    //
+    // stack_overflow();
+
+    // unsafe {
+    //     *(0xdeadbeef as *mut u8) = 0x43;
+    // }
 
     eprintln!("Hello world!");
 

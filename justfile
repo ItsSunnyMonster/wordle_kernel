@@ -32,4 +32,4 @@ run-bios: build
     qemu-system-x86_64 -cdrom build/image.iso
 
 run-uefi: build
-    qemu-system-x86_64 --bios bios.bin -cdrom build/image.iso -net none
+    qemu-system-x86_64 --bios bios.bin -cdrom build/image.iso -net none -d cpu_reset
