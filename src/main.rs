@@ -12,6 +12,7 @@ mod gdt;
 mod interrupts;
 mod limine_structs;
 mod rendering;
+mod serial;
 mod text;
 mod util;
 
@@ -43,6 +44,8 @@ extern "C" fn kernel_main() -> ! {
     // unsafe {
     //     *(0xdeadbeef as *mut u8) = 0x43;
     // }
+
+    serial_println!("Hello world!");
 
     eprintln!("Hello world!");
 
