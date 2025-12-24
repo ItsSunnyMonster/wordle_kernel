@@ -29,7 +29,7 @@ build:
     ./build/limine/limine bios-install build/image.iso
 
 run-bios: build
-    qemu-system-x86_64 -cdrom build/image.iso
+    qemu-system-x86_64 -cdrom build/image.iso -serial stdio
 
 run-uefi: build
     qemu-system-x86_64 --bios bios.bin -cdrom build/image.iso -net none -serial stdio
