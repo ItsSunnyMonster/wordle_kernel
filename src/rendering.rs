@@ -10,7 +10,7 @@ use crate::hcf;
 lazy_static! {
     pub static ref FRAMEBUFFER: Mutex<FramebufferWriter<'static>> = {
         if let Some(framebuffer_response) =
-            crate::limine_structs::FRAMEBUFFER_REQUEST.get_response()
+            crate::limine_requests::FRAMEBUFFER_REQUEST.get_response()
             && let Some(framebuffer) = framebuffer_response.framebuffers().next()
         {
             let writer = FramebufferWriter::new(framebuffer);

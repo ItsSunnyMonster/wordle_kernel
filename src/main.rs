@@ -10,7 +10,7 @@ use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
 
 mod gdt;
 mod interrupts;
-mod limine_structs;
+mod limine_requests;
 mod rendering;
 mod serial;
 mod text;
@@ -20,7 +20,7 @@ mod util;
 //          the ABI matches the expected System V calling convention.
 #[unsafe(no_mangle)]
 extern "C" fn kernel_main() -> ! {
-    assert!(limine_structs::BASE_REVISION.is_supported());
+    assert!(limine_requests::BASE_REVISION.is_supported());
 
     gdt::init();
     interrupts::init_idt();
