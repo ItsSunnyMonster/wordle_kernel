@@ -25,7 +25,7 @@ mod util;
 // SAFETY:  must have a stable, unmangled symbol because it is called by Limine.
 //          the ABI matches the expected System V calling convention.
 #[unsafe(no_mangle)]
-extern "C" fn kernel_main() -> ! {
+extern "C" fn trampoline_main() -> ! {
     debug_assert!(limine_requests::BASE_REVISION.is_supported());
 
     gdt::init();
@@ -37,14 +37,14 @@ extern "C" fn kernel_main() -> ! {
         asm!(
             "mov rsp, {0}",
             "call {1}",
-            in(reg) 0x4888_8888_0000u64 + 0x1000 * 16,
-            sym real_kernel_main,
+            in(reg) memory::STACK_BASE + memory::STACK_SIZE,
+            sym kernel_main,
             options(noreturn)
         );
     }
 }
 
-extern "C" fn real_kernel_main() -> ! {
+extern "C" fn kernel_main() -> ! {
     FRAMEBUFFER
         .lock()
         .clear(Rgb888::new(24, 24, 37))
@@ -75,6 +75,7 @@ extern "C" fn real_kernel_main() -> ! {
 #[panic_handler]
 fn rust_panic(info: &PanicInfo) -> ! {
     eprintln!("{}", info);
+    serial_println!("{}", info);
     hcf();
 }
 

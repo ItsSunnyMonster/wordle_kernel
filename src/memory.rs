@@ -20,6 +20,10 @@ unsafe extern "C" {
     static __data_end: u8;
 }
 
+pub const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
+pub const STACK_BASE: u64 = 0x4888_8888_0000;
+pub const STACK_SIZE: u64 = 0x1000 * 16;
+
 pub fn initialize_paging() {
     // TODO: Setup HHDM / Stack / Heap
     let hhdm_offset = HHDM_REQUEST
@@ -62,8 +66,6 @@ pub fn initialize_paging() {
 }
 
 fn map_hhdm(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
-    const OFFSET: u64 = 0xffff_8000_0000_0000;
-
     for entry in MEMMAP_REQUEST
         .get_response()
         .expect("Response should be provided by Limine.")
@@ -80,7 +82,7 @@ fn map_hhdm(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Early
             offset_page_table,
             frame_allocator,
             PhysAddr::new(entry.base),
-            VirtAddr::new(entry.base + OFFSET),
+            VirtAddr::new(entry.base + HHDM_OFFSET),
             entry.length,
             flags,
         );
@@ -128,19 +130,15 @@ fn map_kernel(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Ear
 }
 
 fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
-    const STACK_BASE: u64 = 0x4888_8888_0000;
-
     // 64Kib of stack
-    for i in 0u8..64 / 4 {
+    for i in 0u64..STACK_SIZE / 0x1000 {
         let frame = frame_allocator.allocate_frame().expect("Out of memory.");
 
         // SAFETY: Stack is only mapped once.
         unsafe {
             offset_page_table
                 .map_to(
-                    Page::from_start_address_unchecked(VirtAddr::new(
-                        STACK_BASE + i as u64 * 0x1000,
-                    )),
+                    Page::from_start_address_unchecked(VirtAddr::new(STACK_BASE + i * 0x1000)),
                     frame,
                     PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
                     frame_allocator,
