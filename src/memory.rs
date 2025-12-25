@@ -4,7 +4,7 @@ use x86_64::{
     registers::control::{Cr3, Cr3Flags},
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PageTableFlags,
-        PhysFrame, Size1GiB, Size2MiB, Size4KiB, frame,
+        PhysFrame, Size1GiB, Size2MiB, Size4KiB,
     },
 };
 
@@ -21,6 +21,8 @@ unsafe extern "C" {
 }
 
 pub const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
+
+// These two must be 0x1000 aligned.
 pub const STACK_BASE: u64 = 0x4888_8888_0000;
 pub const STACK_SIZE: u64 = 0x1000 * 16;
 
@@ -31,6 +33,7 @@ pub fn initialize_paging() {
         .expect("Response should be provided by Limine.")
         .offset();
 
+    // Allocate a new frame for the new page table
     let mut frame_allocator = EarlyFrameAllocator::new();
     let page_table_addr = frame_allocator
         .allocate_frame()
@@ -47,6 +50,8 @@ pub fn initialize_paging() {
         *page_table_ptr = PageTable::new();
     }
 
+    // This implementation of mapper uses an offset value to calculate physical addresses from
+    // virtual addresses.
     // SAFETY: offset is provided by limine and should be correct; pointer should point to valid
     // page table as we initialized it before.
     let mut offset_page_table =
@@ -56,7 +61,10 @@ pub fn initialize_paging() {
     map_kernel(&mut offset_page_table, &mut frame_allocator);
     map_stack(&mut offset_page_table, &mut frame_allocator);
 
-    // The physical address should point to the page table we just set up.
+    // SAFETY: after switching to our own paging we will also be switching stack and calling a new
+    // entry point function. This means we won't rely on any references that still used the old
+    // memory layout.
+    // Any references to kernel stuff also should be valid as we map the kernel to the same place.
     unsafe {
         Cr3::write(
             PhysFrame::from_start_address_unchecked(PhysAddr::new(page_table_addr - hhdm_offset)),
@@ -130,7 +138,7 @@ fn map_kernel(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Ear
 }
 
 fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
-    // 64Kib of stack
+    // i represents number of pages
     for i in 0u64..STACK_SIZE / 0x1000 {
         let frame = frame_allocator.allocate_frame().expect("Out of memory.");
 
@@ -173,6 +181,9 @@ fn map_range(
                     .map_to(page, frame, flags, frame_allocator)
                     .expect("Mapping failed.")
                     .ignore();
+                // We ignore the result because we are building a new page table
+                // which isn't active yet. We will switch the page tables all at
+                // once later.
             }
 
             virt += Size1GiB::SIZE;
@@ -216,6 +227,7 @@ fn map_range(
     }
 }
 
+// This allocator completely ignores reclaimable memory. It only allocates from USABLE
 struct EarlyFrameAllocator {
     memmap_index: usize,
     next_frame: PhysAddr,
@@ -230,7 +242,8 @@ impl EarlyFrameAllocator {
     }
 }
 
-// SAFETY: check safety after implementation
+// SAFETY: next_frame pointer is always updated after a frame has been allocated so it will not
+// allocate any frames that has already been allocated.
 unsafe impl FrameAllocator<Size4KiB> for EarlyFrameAllocator {
     fn allocate_frame(&mut self) -> Option<x86_64::structures::paging::PhysFrame<Size4KiB>> {
         for entry in MEMMAP_REQUEST
@@ -239,11 +252,13 @@ unsafe impl FrameAllocator<Size4KiB> for EarlyFrameAllocator {
             .entries()[self.memmap_index..]
             .iter()
         {
+            // If not usable, move on to the next region
             if entry.entry_type != EntryType::USABLE {
                 self.memmap_index += 1;
                 continue;
             }
 
+            // If the next_frame pointer is after the current region, move on to the next region.
             if self.next_frame.as_u64() >= entry.base + entry.length {
                 self.memmap_index += 1;
                 continue;
