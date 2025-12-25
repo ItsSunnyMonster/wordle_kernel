@@ -2,7 +2,7 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
-use core::panic::PanicInfo;
+use core::{arch::asm, panic::PanicInfo};
 
 use embedded_graphics::{pixelcolor::Rgb888, prelude::*};
 
@@ -11,20 +11,40 @@ use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
 mod gdt;
 mod interrupts;
 mod limine_requests;
+mod memory;
 mod rendering;
 mod serial;
 mod text;
 mod util;
 
+/// # Setup order
+/// 1. Exception handling
+/// 2. Basic stack and heap
+/// 3. Reclaim bootloader memory
+/// 4. Initialize bevy, etc
 // SAFETY:  must have a stable, unmangled symbol because it is called by Limine.
 //          the ABI matches the expected System V calling convention.
 #[unsafe(no_mangle)]
 extern "C" fn kernel_main() -> ! {
-    assert!(limine_requests::BASE_REVISION.is_supported());
+    debug_assert!(limine_requests::BASE_REVISION.is_supported());
 
     gdt::init();
     interrupts::init_idt();
 
+    memory::initialize_paging();
+
+    unsafe {
+        asm!(
+            "mov rsp, {0}",
+            "call {1}",
+            in(reg) 0x4888_8888_0000u64 + 0x1000 * 16,
+            sym real_kernel_main,
+            options(noreturn)
+        );
+    }
+}
+
+extern "C" fn real_kernel_main() -> ! {
     FRAMEBUFFER
         .lock()
         .clear(Rgb888::new(24, 24, 37))

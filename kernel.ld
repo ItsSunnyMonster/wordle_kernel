@@ -20,12 +20,19 @@ SECTIONS
     /* that is the beginning of the region. */
     . = 0xffffffff80000000;
 
+    __text_start = .;
+
     .text : {
         *(.text .text.*)
     } :text
 
     /* Move to the next memory page for .rodata */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    __text_end = .;
+
+
+    __rodata_start = .;
 
     .rodata : {
         *(.rodata .rodata.*)
@@ -34,6 +41,10 @@ SECTIONS
     /* Move to the next memory page for .data */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+    __rodata_end = .;
+
+
+    __data_start = .;
     .data : {
         *(.data .data.*)
 
@@ -52,6 +63,10 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     } :data
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    __data_end = .;
 
     /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
     /DISCARD/ : {
