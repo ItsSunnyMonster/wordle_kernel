@@ -33,6 +33,8 @@ extern "C" fn trampoline_main() -> ! {
 
     memory::initialize_paging();
 
+    // SAFETY: this assembly snippet calls kernel_main which then never returns. Execution
+    // effectively starts afresh in kernel_main.
     unsafe {
         asm!(
             "mov rsp, {0}",

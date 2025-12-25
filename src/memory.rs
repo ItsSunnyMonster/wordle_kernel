@@ -1,16 +1,21 @@
+// TODO: better error handling.
+
+use core::panic;
+
 use limine::memory_map::EntryType;
 use x86_64::{
     PhysAddr, VirtAddr,
     registers::control::{Cr3, Cr3Flags},
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PageTableFlags,
-        PhysFrame, Size1GiB, Size2MiB, Size4KiB,
+        PhysFrame, Size1GiB, Size2MiB, Size4KiB, mapper::MapToError, page::AddressNotAligned,
     },
 };
 
 use crate::limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST};
 
 // Linker symbols placed at the boundaries of kernel sections
+// SAFETY: linker symbols should be present as specified in the linker script.
 unsafe extern "C" {
     static __text_start: u8;
     static __text_end: u8;
@@ -37,7 +42,7 @@ pub fn initialize_paging() {
     let mut frame_allocator = EarlyFrameAllocator::new();
     let page_table_addr = frame_allocator
         .allocate_frame()
-        .expect("Out of memory.")
+        .unwrap_or_else(|| panic!("Out of memory when allocating frame for page table."))
         .start_address()
         .as_u64()
         + hhdm_offset;
@@ -86,14 +91,19 @@ fn map_hhdm(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Early
 
         let flags = PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE;
 
-        map_range(
-            offset_page_table,
-            frame_allocator,
-            PhysAddr::new(entry.base),
-            VirtAddr::new(entry.base + HHDM_OFFSET),
-            entry.length,
-            flags,
-        );
+        // SAFETY: the kernel must ensure that any memory in the higher half isn't used apart from
+        // for accessing specific memory at physical addresses.
+        unsafe {
+            map_range(
+                offset_page_table,
+                frame_allocator,
+                PhysAddr::new(entry.base),
+                VirtAddr::new(entry.base + HHDM_OFFSET),
+                entry.length,
+                flags,
+            )
+        }
+        .unwrap_or_else(|e| panic!("Failed to map HHDM! {e:#?}"));
     }
 }
 
@@ -104,67 +114,121 @@ fn map_kernel(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Ear
         .physical_base();
 
     let text_length = (&raw const __text_end) as u64 - (&raw const __text_start) as u64;
-    map_range(
-        offset_page_table,
-        frame_allocator,
-        PhysAddr::new(phys),
-        VirtAddr::from_ptr(&raw const __text_start),
-        text_length,
-        PageTableFlags::PRESENT,
-    );
+    // SAFETY: this mapping should map the kernel to exactly where it expects itself.
+    unsafe {
+        map_range(
+            offset_page_table,
+            frame_allocator,
+            PhysAddr::new(phys),
+            VirtAddr::from_ptr(&raw const __text_start),
+            text_length,
+            PageTableFlags::PRESENT,
+        )
+    }
+    .unwrap_or_else(|e| panic!("Failed to map kernel .text! {e:#?}"));
     // Kernel executable is guaranteed to be physically contiguous according to Limine.
     phys += text_length;
 
     let rodata_length = (&raw const __rodata_end) as u64 - (&raw const __rodata_start) as u64;
-    map_range(
-        offset_page_table,
-        frame_allocator,
-        PhysAddr::new(phys),
-        VirtAddr::from_ptr(&raw const __rodata_start),
-        rodata_length,
-        PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE,
-    );
+    // SAFETY: this mapping should map the kernel to exactly where it expects itself.
+    unsafe {
+        map_range(
+            offset_page_table,
+            frame_allocator,
+            PhysAddr::new(phys),
+            VirtAddr::from_ptr(&raw const __rodata_start),
+            rodata_length,
+            PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE,
+        )
+    }
+    .unwrap_or_else(|e| panic!("Failed to map kernel .rodata! {e:#?}"));
     phys += rodata_length;
 
     let data_length = (&raw const __data_end) as u64 - (&raw const __data_start) as u64;
-    map_range(
-        offset_page_table,
-        frame_allocator,
-        PhysAddr::new(phys),
-        VirtAddr::from_ptr(&raw const __data_start),
-        data_length,
-        PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
-    );
+    // SAFETY: this mapping should map the kernel to exactly where it expects itself.
+    unsafe {
+        map_range(
+            offset_page_table,
+            frame_allocator,
+            PhysAddr::new(phys),
+            VirtAddr::from_ptr(&raw const __data_start),
+            data_length,
+            PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
+        )
+    }
+    .unwrap_or_else(|e| panic!("Failed to map kernel .data! {e:#?}"));
 }
 
 fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
     // i represents number of pages
     for i in 0u64..STACK_SIZE / 0x1000 {
-        let frame = frame_allocator.allocate_frame().expect("Out of memory.");
+        let frame = frame_allocator
+            .allocate_frame()
+            .unwrap_or_else(|| panic!("Out of memory while allocating frames for stack."));
 
         // SAFETY: Stack is only mapped once.
-        unsafe {
-            offset_page_table
-                .map_to(
-                    Page::from_start_address_unchecked(VirtAddr::new(STACK_BASE + i * 0x1000)),
-                    frame,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
-                    frame_allocator,
-                )
-                .expect("Mapping failed.")
-                .ignore();
+        let result = unsafe {
+            offset_page_table.map_to(
+                Page::from_start_address_unchecked(VirtAddr::new(STACK_BASE + i * 0x1000)),
+                frame,
+                PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
+                frame_allocator,
+            )
+        };
+
+        if let Err(MapToError::FrameAllocationFailed) = result {
+            panic!("Out of memory while allocating frame for page table.");
         }
+
+        result
+            .expect("Stack region should not overlap with any other already allocated regions.")
+            .ignore();
     }
 }
 
-fn map_range(
+#[allow(dead_code)]
+#[derive(Debug)]
+enum MapRangeError {
+    AddressNotAligned(AddressNotAligned),
+    MapToError4KiB(MapToError<Size4KiB>),
+    MapToError2MiB(MapToError<Size2MiB>),
+    MapToError1GiB(MapToError<Size1GiB>),
+}
+
+#[allow(dead_code)]
+impl MapRangeError {
+    pub fn is_out_of_memory(&self) -> bool {
+        matches!(
+            self,
+            Self::MapToError4KiB(MapToError::FrameAllocationFailed)
+                | Self::MapToError2MiB(MapToError::FrameAllocationFailed)
+                | Self::MapToError1GiB(MapToError::FrameAllocationFailed)
+        )
+    }
+
+    pub fn is_already_mapped(&self) -> bool {
+        matches!(
+            self,
+            Self::MapToError4KiB(MapToError::ParentEntryHugePage)
+                | Self::MapToError4KiB(MapToError::PageAlreadyMapped(_))
+                | Self::MapToError2MiB(MapToError::ParentEntryHugePage)
+                | Self::MapToError2MiB(MapToError::PageAlreadyMapped(_))
+                | Self::MapToError1GiB(MapToError::ParentEntryHugePage)
+                | Self::MapToError1GiB(MapToError::PageAlreadyMapped(_))
+        )
+    }
+}
+
+/// # SAFETY
+/// The caller must ensure that mapping the specified range will not break any invariants.
+unsafe fn map_range(
     offset_page_table: &mut OffsetPageTable,
     frame_allocator: &mut EarlyFrameAllocator,
     mut phys: PhysAddr,
     mut virt: VirtAddr,
     size: u64,
     flags: PageTableFlags,
-) {
+) -> core::result::Result<(), MapRangeError> {
     let end = virt + size;
 
     while virt < end {
@@ -173,13 +237,17 @@ fn map_range(
             && phys.is_aligned(Size1GiB::SIZE)
             && virt + Size1GiB::SIZE <= end
         {
-            let page = Page::<Size1GiB>::from_start_address(virt).unwrap();
-            let frame = PhysFrame::<Size1GiB>::from_start_address(phys).unwrap();
+            let page = Page::<Size1GiB>::from_start_address(virt)
+                .expect("Alignment was checked in if statement.");
+            let frame = PhysFrame::<Size1GiB>::from_start_address(phys)
+                .expect("Alignment was checked in if statement.");
 
+            // SAFETY: the caller should verify that no invariants are broken by their new memory
+            // layout.
             unsafe {
                 offset_page_table
                     .map_to(page, frame, flags, frame_allocator)
-                    .expect("Mapping failed.")
+                    .map_err(MapRangeError::MapToError1GiB)?
                     .ignore();
                 // We ignore the result because we are building a new page table
                 // which isn't active yet. We will switch the page tables all at
@@ -196,13 +264,17 @@ fn map_range(
             && phys.is_aligned(Size2MiB::SIZE)
             && virt + Size2MiB::SIZE <= end
         {
-            let page = Page::<Size2MiB>::from_start_address(virt).unwrap();
-            let frame = PhysFrame::<Size2MiB>::from_start_address(phys).unwrap();
+            let page = Page::<Size2MiB>::from_start_address(virt)
+                .expect("Alignment was checked in if statement.");
+            let frame = PhysFrame::<Size2MiB>::from_start_address(phys)
+                .expect("Alignment was checked in if statement.");
 
+            // SAFETY: the caller should verify that no invariants are broken by their new memory
+            // layout.
             unsafe {
                 offset_page_table
                     .map_to(page, frame, flags, frame_allocator)
-                    .expect("Mapping failed.")
+                    .map_err(MapRangeError::MapToError2MiB)?
                     .ignore();
             }
 
@@ -212,19 +284,25 @@ fn map_range(
         }
 
         // 4KiB pages
-        let page = Page::<Size4KiB>::from_start_address(virt).unwrap();
-        let frame = PhysFrame::<Size4KiB>::from_start_address(phys).unwrap();
+        let page =
+            Page::<Size4KiB>::from_start_address(virt).map_err(MapRangeError::AddressNotAligned)?;
+        let frame = PhysFrame::<Size4KiB>::from_start_address(phys)
+            .map_err(MapRangeError::AddressNotAligned)?;
 
+        // SAFETY: the caller should verify that no invariants are broken by their new memory
+        // layout.
         unsafe {
             offset_page_table
                 .map_to(page, frame, flags, frame_allocator)
-                .expect("Mapping failed.")
+                .map_err(MapRangeError::MapToError4KiB)?
                 .ignore();
         }
 
         virt += Size4KiB::SIZE;
         phys += Size4KiB::SIZE;
     }
+
+    Ok(())
 }
 
 // This allocator completely ignores reclaimable memory. It only allocates from USABLE

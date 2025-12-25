@@ -78,5 +78,8 @@ macro_rules! eprintln {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    DEBUG_WRITER.lock().write_fmt(args).unwrap();
+    DEBUG_WRITER
+        .lock()
+        .write_fmt(args)
+        .expect("Writing to DebugWriter never returns an error.");
 }
