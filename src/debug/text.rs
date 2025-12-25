@@ -8,7 +8,7 @@ use embedded_graphics::{
 };
 use spin::Mutex;
 
-use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
+use crate::{debug::rendering::DEBUG_FRAMEBUFFER, util::InfallibleResultExt};
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -33,7 +33,7 @@ impl DebugWriter {
             // New line or line wrap
             if c == '\n'
                 || self.position.x
-                    >= FRAMEBUFFER.lock().fb.width() as i32
+                    >= DEBUG_FRAMEBUFFER.lock().fb.width() as i32
                         - 20
                         - self.style.font.character_size.width as i32
             {
@@ -50,7 +50,7 @@ impl DebugWriter {
                     c.encode_utf8(&mut tmp),
                     self.position,
                     embedded_graphics::text::Baseline::Bottom,
-                    &mut *FRAMEBUFFER.lock(),
+                    &mut *DEBUG_FRAMEBUFFER.lock(),
                 )
                 .infallible();
         }

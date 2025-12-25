@@ -8,7 +8,7 @@ use spin::Mutex;
 use crate::hcf;
 
 lazy_static! {
-    pub static ref FRAMEBUFFER: Mutex<FramebufferWriter<'static>> = {
+    pub static ref DEBUG_FRAMEBUFFER: Mutex<FramebufferWriter<'static>> = {
         if let Some(framebuffer_response) =
             crate::limine_requests::FRAMEBUFFER_REQUEST.get_response()
             && let Some(framebuffer) = framebuffer_response.framebuffers().next()

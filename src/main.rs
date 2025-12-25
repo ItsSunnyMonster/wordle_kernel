@@ -2,19 +2,14 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
+use crate::debug::serial;
+use crate::debug::text;
 use core::{arch::asm, panic::PanicInfo};
 
-use embedded_graphics::{pixelcolor::Rgb888, prelude::*};
+use crate::trampoline::{gdt, interrupts, limine_requests, memory};
 
-use crate::{rendering::FRAMEBUFFER, util::InfallibleResultExt};
-
-mod gdt;
-mod interrupts;
-mod limine_requests;
-mod memory;
-mod rendering;
-mod serial;
-mod text;
+mod debug;
+mod trampoline;
 mod util;
 
 /// # Setup order
@@ -33,25 +28,19 @@ extern "C" fn trampoline_main() -> ! {
 
     memory::initialize_paging();
 
-    // SAFETY: this assembly snippet calls kernel_main which then never returns. Execution
-    // effectively starts afresh in kernel_main.
+    // SAFETY: this switches the kernel stack, but then we call kernel_main after, which never
+    // returns. Execution effectively starts afresh in kernel_main.
     unsafe {
         asm!(
             "mov rsp, {0}",
-            "call {1}",
             in(reg) memory::STACK_BASE + memory::STACK_SIZE,
-            sym kernel_main,
-            options(noreturn)
         );
     }
+
+    kernel_main();
 }
 
 extern "C" fn kernel_main() -> ! {
-    FRAMEBUFFER
-        .lock()
-        .clear(Rgb888::new(24, 24, 37))
-        .infallible();
-
     // // Trigger stack overflow
     // #[allow(unconditional_recursion)]
     // fn stack_overflow() {
