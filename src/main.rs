@@ -14,10 +14,10 @@ use core::{arch::asm, panic::PanicInfo};
 
 use crate::trampoline::{gdt, interrupts, limine_requests, memory};
 
-mod bevy;
 mod debug;
 mod trampoline;
 mod util;
+mod wordle;
 
 /// # Setup order
 /// 1. Exception handling
@@ -52,7 +52,7 @@ extern "C" fn trampoline_main() -> ! {
 }
 
 extern "C" fn kernel_main() -> ! {
-    bevy::run();
+    wordle::run();
 
     hcf();
 }
