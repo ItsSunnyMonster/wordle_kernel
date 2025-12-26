@@ -38,7 +38,6 @@ pub const HEAP_SIZE: u64 = 0x1000 * 25; // 100KiB
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 pub fn initialize_paging() {
-    // TODO: Setup HHDM / Stack / Heap
     let hhdm_offset = HHDM_REQUEST
         .get_response()
         .expect("Response should be provided by Limine.")
