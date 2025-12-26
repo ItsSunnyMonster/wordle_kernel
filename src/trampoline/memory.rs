@@ -1,8 +1,7 @@
-// TODO: better error handling.
-
 use core::panic;
 
 use limine::memory_map::EntryType;
+use linked_list_allocator::LockedHeap;
 use x86_64::{
     PhysAddr, VirtAddr,
     registers::control::{Cr3, Cr3Flags},
@@ -12,7 +11,10 @@ use x86_64::{
     },
 };
 
-use crate::limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST};
+use crate::{
+    eprintln,
+    limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST},
+};
 
 // Linker symbols placed at the boundaries of kernel sections
 // SAFETY: linker symbols should be present as specified in the linker script.
@@ -23,13 +25,20 @@ unsafe extern "C" {
     static __rodata_end: u8;
     static __data_start: u8;
     static __data_end: u8;
+    static __got_start: u8;
+    static __got_end: u8;
 }
 
 pub const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
 
-// These two must be 0x1000 aligned.
+// These must be 0x1000 aligned.
 pub const STACK_BASE: u64 = 0x4888_8888_0000;
-pub const STACK_SIZE: u64 = 0x1000 * 16;
+pub const STACK_SIZE: u64 = 0x1000 * 16; // 64KiB
+pub const HEAP_BASE: u64 = 0x4444_4444_0000;
+pub const HEAP_SIZE: u64 = 0x1000 * 25; // 100KiB
+
+#[global_allocator]
+static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 pub fn initialize_paging() {
     // TODO: Setup HHDM / Stack / Heap
@@ -65,6 +74,7 @@ pub fn initialize_paging() {
     map_hhdm(&mut offset_page_table, &mut frame_allocator);
     map_kernel(&mut offset_page_table, &mut frame_allocator);
     map_stack(&mut offset_page_table, &mut frame_allocator);
+    map_heap(&mut offset_page_table, &mut frame_allocator);
 
     // SAFETY: after switching to our own paging we will also be switching stack and calling a new
     // entry point function. This means we won't rely on any references that still used the old
@@ -157,6 +167,21 @@ fn map_kernel(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Ear
         )
     }
     .unwrap_or_else(|e| panic!("Failed to map kernel .data! {e:#?}"));
+    phys += data_length;
+
+    let got_length = (&raw const __got_end) as u64 - (&raw const __got_start) as u64;
+    // SAFETY: this mapping should map the kernel to exactly where it expects itself.
+    unsafe {
+        map_range(
+            offset_page_table,
+            frame_allocator,
+            PhysAddr::new(phys),
+            VirtAddr::from_ptr(&raw const __got_start),
+            got_length,
+            PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE,
+        )
+    }
+    .unwrap_or_else(|e| panic!("Failed to map kernel .got! {e:#?}"));
 }
 
 fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
@@ -182,6 +207,33 @@ fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Earl
 
         result
             .expect("Stack region should not overlap with any other already allocated regions.")
+            .ignore();
+    }
+}
+
+fn map_heap(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
+    // i represents number of pages
+    for i in 0u64..HEAP_SIZE / 0x1000 {
+        let frame = frame_allocator
+            .allocate_frame()
+            .unwrap_or_else(|| panic!("Out of memory while allocating frames for heap."));
+
+        // SAFETY: Heap is only mapped once.
+        let result = unsafe {
+            offset_page_table.map_to(
+                Page::from_start_address_unchecked(VirtAddr::new(HEAP_BASE + i * 0x1000)),
+                frame,
+                PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
+                frame_allocator,
+            )
+        };
+
+        if let Err(MapToError::FrameAllocationFailed) = result {
+            panic!("Out of memory while allocating frame for page table.");
+        }
+
+        result
+            .expect("Heap region should not overlap with any other already allocated regions.")
             .ignore();
     }
 }
@@ -303,6 +355,16 @@ unsafe fn map_range(
     }
 
     Ok(())
+}
+
+/// # Safety
+/// This function should only be called after the heap has been mapped.
+pub unsafe fn init_allocator() {
+    unsafe {
+        ALLOCATOR
+            .lock()
+            .init(HEAP_BASE as *mut u8, HEAP_SIZE as usize);
+    }
 }
 
 // This allocator completely ignores reclaimable memory. It only allocates from USABLE

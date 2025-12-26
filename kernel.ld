@@ -68,6 +68,16 @@ SECTIONS
 
     __data_end = .;
 
+    __got_start = .;
+
+    .got : {
+        *(.got .got.*)
+    }
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    __got_end = .;
+
     /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
     /DISCARD/ : {
         *(.eh_frame*)

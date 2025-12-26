@@ -1,4 +1,7 @@
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
+use x86_64::{
+    registers::control::Cr2,
+    structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode},
+};
 
 use crate::{eprintln, gdt};
 
@@ -43,8 +46,10 @@ extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
+    let addr = Cr2::read();
+
     panic!(
-        "EXCEPTION: PAGE FAULT code {:?}\n{:#?}",
+        "EXCEPTION: PAGE FAULT at {addr:?} code {:?}\n{:#?}",
         error_code, stack_frame
     );
 }
