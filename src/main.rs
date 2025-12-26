@@ -4,10 +4,6 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-use alloc::rc::Rc;
-use alloc::vec::Vec;
-
 use crate::debug::serial;
 use crate::debug::text;
 use core::{arch::asm, panic::PanicInfo};

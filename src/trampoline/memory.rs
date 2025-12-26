@@ -11,10 +11,7 @@ use x86_64::{
     },
 };
 
-use crate::{
-    eprintln,
-    limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST},
-};
+use crate::limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST};
 
 // Linker symbols placed at the boundaries of kernel sections
 // SAFETY: linker symbols should be present as specified in the linker script.
