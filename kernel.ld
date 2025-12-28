@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2025 SunnyMonster
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 OUTPUT_FORMAT(elf64-x86-64)
 
 ENTRY(trampoline_main)

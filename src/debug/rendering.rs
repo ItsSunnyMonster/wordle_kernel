@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 SunnyMonster
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use core::convert::Infallible;
 
 use embedded_graphics::{Pixel, pixelcolor::Rgb888, prelude::*};

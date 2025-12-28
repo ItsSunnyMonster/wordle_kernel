@@ -2,6 +2,10 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
+// SPDX-FileCopyrightText: 2025 SunnyMonster
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 extern crate alloc;
 
 use crate::debug::serial;

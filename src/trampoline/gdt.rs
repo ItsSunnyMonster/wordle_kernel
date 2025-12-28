@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 SunnyMonster
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use lazy_static::lazy_static;
 use x86_64::{
     VirtAddr,

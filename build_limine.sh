@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 SunnyMonster
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 if [ -z "$(ls -A 'build/limine')" ]; then
     git clone https://codeberg.org/Limine/Limine.git build/limine --branch=v10.x-binary --depth=1
 else
