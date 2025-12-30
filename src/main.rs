@@ -8,9 +8,15 @@
 
 extern crate alloc;
 
+use x86_64::VirtAddr;
+use x86_64::structures::paging::OffsetPageTable;
+
 use crate::debug::serial;
 use crate::debug::text;
 use crate::trampoline::BootInfo;
+use crate::trampoline::memory::HHDM_OFFSET;
+use crate::trampoline::memory::get_pagetable;
+use crate::trampoline::memory::map_framebuffers;
 use core::{arch::asm, panic::PanicInfo};
 
 use crate::trampoline::{gdt, interrupts, limine_requests, memory};
@@ -34,7 +40,15 @@ extern "C" fn trampoline_main() -> ! {
     gdt::init();
     interrupts::init_idt();
 
-    let framebuffers = memory::initialize_paging();
+    let mut frame_allocator = memory::initialize_paging();
+
+    let page_table = get_pagetable();
+    // SAFETY: get_pagetable returns address from CR3 which must be valid. HHDM_OFFSET is correct
+    // as we mapped our own HHDM before with the call to initialize_paging.
+    let mut offset_page_table =
+        unsafe { OffsetPageTable::new(page_table, VirtAddr::new(HHDM_OFFSET)) };
+
+    let framebuffers = map_framebuffers(&mut offset_page_table, &mut frame_allocator);
 
     // SAFETY: this switches the kernel stack, but then we call kernel_main after, which never
     // returns. Execution effectively starts afresh in kernel_main.
@@ -45,7 +59,10 @@ extern "C" fn trampoline_main() -> ! {
         );
     }
 
-    kernel_main(BootInfo { framebuffers });
+    kernel_main(BootInfo {
+        framebuffers,
+        frame_allocator,
+    });
 }
 
 fn kernel_main(boot_info: BootInfo) -> ! {

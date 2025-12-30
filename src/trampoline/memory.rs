@@ -47,7 +47,7 @@ pub const HEAP_SIZE: u64 = 0x1000 * 25; // 100KiB
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
-pub fn initialize_paging() -> Vec<Framebuffer> {
+pub fn initialize_paging() -> ProperFrameAllocator {
     let hhdm_offset = HHDM_REQUEST
         .get_response()
         .expect("Response should be provided by Limine.")
@@ -104,12 +104,12 @@ pub fn initialize_paging() -> Vec<Framebuffer> {
         init_allocator();
     }
 
-    map_framebuffers(&mut offset_page_table, &mut frame_allocator)
+    ProperFrameAllocator::new(frame_allocator)
 }
 
-fn map_framebuffers(
+pub fn map_framebuffers(
     offset_page_table: &mut OffsetPageTable,
-    frame_allocator: &mut EarlyFrameAllocator,
+    frame_allocator: &mut ProperFrameAllocator,
 ) -> Vec<Framebuffer> {
     let mut framebuffers = vec![];
 
@@ -137,10 +137,10 @@ fn map_framebuffers(
             };
 
             // Allocate back buffer
-            let num_frames = framebuffer_size.div_ceil(0x1000);
+            let num_frames = framebuffer_size.div_ceil(Size2MiB::SIZE);
 
             for _ in 0..num_frames {
-                let frame = frame_allocator
+                let frame: PhysFrame<Size2MiB> = frame_allocator
                     .allocate_frame()
                     .unwrap_or_else(|| panic!("Out of memory when allocating back buffer!"));
                 // SAFETY: Address is only incremented by page size, backbuffer is only mapped
@@ -148,9 +148,12 @@ fn map_framebuffers(
                 unsafe {
                     offset_page_table
                         .map_to(
-                            Page::from_start_address_unchecked(VirtAddr::new(back_buffer_virt)),
+                            Page::from_start_address(VirtAddr::new(back_buffer_virt)).expect(
+                                "Framebuffer addresses are only incremented by 2MiB at a time.",
+                            ),
                             frame,
                             PageTableFlags::PRESENT
+                                | PageTableFlags::HUGE_PAGE
                                 | PageTableFlags::WRITABLE
                                 | PageTableFlags::NO_EXECUTE,
                             frame_allocator,
@@ -158,17 +161,24 @@ fn map_framebuffers(
                         .unwrap_or_else(|e| panic!("Failed to map back buffer! {e:#?}"))
                         .flush();
                 }
-                back_buffer_virt += Size4KiB::SIZE;
+                back_buffer_virt += Size2MiB::SIZE;
             }
 
-            // Guard page
-            back_buffer_virt += Size4KiB::SIZE;
+            // Guard page + alignment
+            back_buffer_virt += Size2MiB::SIZE;
 
             framebuffers.push(new_framebuffer);
         }
     }
 
     framebuffers
+}
+
+pub fn get_pagetable<'a>() -> &'a mut PageTable {
+    let (cr3, _) = Cr3::read();
+    let page_table_addr = cr3.start_address().as_u64() + HHDM_OFFSET;
+
+    unsafe { &mut *(page_table_addr as *mut PageTable) }
 }
 
 fn map_hhdm(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
@@ -502,5 +512,118 @@ unsafe impl FrameAllocator<Size4KiB> for EarlyFrameAllocator {
         }
 
         None
+    }
+}
+
+pub struct AddressRange(u64, u64);
+
+pub struct ProperFrameAllocator {
+    availables: Vec<AddressRange>,
+}
+
+impl ProperFrameAllocator {
+    fn push_range(availables: &mut Vec<AddressRange>, range: AddressRange) {
+        // If the last range ends the same as the new range's start, we can merge them
+        if let Some(last) = availables.last_mut()
+            && last.1 == range.0
+        {
+            last.1 = range.1;
+            return;
+        }
+
+        // Otherwise we just push it
+        availables.push(range);
+    }
+
+    fn new(early_frame_allocator: EarlyFrameAllocator) -> Self {
+        let mut availables = vec![];
+
+        for entry in MEMMAP_REQUEST
+            .get_response()
+            .expect("Response should be provided by Limine.")
+            .entries()
+        {
+            match entry.entry_type {
+                // Early frame allocator does not allocate from reclaimable memory
+                EntryType::BOOTLOADER_RECLAIMABLE | EntryType::ACPI_RECLAIMABLE => {
+                    Self::push_range(
+                        &mut availables,
+                        AddressRange(entry.base, entry.base + entry.length),
+                    );
+                }
+                // Only usable sections that haven't been touched by the early frame allocator can
+                // be used.
+                EntryType::USABLE => {
+                    // The next frame pointer has already moved past this USABLE section
+                    if entry.base + entry.length <= early_frame_allocator.next_frame.as_u64() {
+                        continue;
+                    }
+
+                    // The next frame pointer is inside this USABLE section
+                    if early_frame_allocator.next_frame.as_u64() >= entry.base {
+                        Self::push_range(
+                            &mut availables,
+                            AddressRange(
+                                early_frame_allocator.next_frame.as_u64(),
+                                entry.base + entry.length,
+                            ),
+                        );
+                        continue;
+                    }
+
+                    // The next frame pointer is before this USABLE section
+                    Self::push_range(
+                        &mut availables,
+                        AddressRange(entry.base, entry.base + entry.length),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        Self { availables }
+    }
+}
+
+unsafe impl<S: PageSize> FrameAllocator<S> for ProperFrameAllocator {
+    fn allocate_frame(&mut self) -> Option<PhysFrame<S>> {
+        let mut additional_range = None;
+        let mut frame_start = None;
+
+        'outer: for range in &mut self.availables {
+            let mut start = range.0;
+
+            while range.1 - start >= S::SIZE {
+                let align_mask = !(S::SIZE - 1);
+
+                // The address is aligned
+                if start & align_mask == start {
+                    let range_end = range.1;
+                    range.1 = start;
+
+                    if start + S::SIZE < range_end {
+                        additional_range = Some(AddressRange(start + S::SIZE, range_end));
+                    }
+
+                    frame_start = Some(start);
+
+                    break 'outer;
+                }
+
+                start += Size4KiB::SIZE;
+            }
+        }
+
+        // This will put the new range at the back, which means it can't merge with other ranges if
+        // any ranges are then freed. However, in this project, we don't need to free frames ever.
+        // So that's fine.
+        if let Some(additional_range) = additional_range {
+            self.availables.push(additional_range);
+        }
+
+        frame_start.map(|a| {
+            PhysFrame::from_start_address(PhysAddr::new(a))
+                .expect("Address should always be correctly aligned.")
+        })
     }
 }

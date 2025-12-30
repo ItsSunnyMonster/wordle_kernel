@@ -6,6 +6,8 @@ use alloc::vec::Vec;
 use bevy::ecs::resource::Resource;
 use framebuffer::Framebuffer;
 
+use crate::trampoline::memory::ProperFrameAllocator;
+
 pub mod framebuffer;
 pub mod gdt;
 pub mod interrupts;
@@ -13,6 +15,8 @@ pub mod limine_requests;
 pub mod memory;
 
 #[derive(Resource)]
+#[allow(dead_code)]
 pub struct BootInfo {
     pub framebuffers: Vec<Framebuffer>,
+    pub frame_allocator: ProperFrameAllocator,
 }

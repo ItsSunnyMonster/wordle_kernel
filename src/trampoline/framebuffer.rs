@@ -27,7 +27,7 @@ pub struct Framebuffer {
 }
 
 impl Framebuffer {
-    pub const FRAMEBUFFER_BASE: u64 = 0x2222_2222_0000;
+    pub const FRAMEBUFFER_BASE: u64 = 0x2222_2220_0000;
 
     pub fn write_pixel(&mut self, x: u64, y: u64, mut r: u8, mut g: u8, mut b: u8) {
         assert!(x < self.width);
