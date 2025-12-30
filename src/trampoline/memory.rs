@@ -4,6 +4,8 @@
 
 use core::panic;
 
+use alloc::vec;
+use alloc::vec::Vec;
 use limine::memory_map::EntryType;
 use linked_list_allocator::LockedHeap;
 use x86_64::{
@@ -15,7 +17,11 @@ use x86_64::{
     },
 };
 
-use crate::limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST};
+use crate::{
+    debug::rendering::DEBUG_FRAMEBUFFER,
+    limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST},
+    trampoline::{framebuffer::Framebuffer, limine_requests::FRAMEBUFFER_REQUEST},
+};
 
 // Linker symbols placed at the boundaries of kernel sections
 // SAFETY: linker symbols should be present as specified in the linker script.
@@ -41,7 +47,7 @@ pub const HEAP_SIZE: u64 = 0x1000 * 25; // 100KiB
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
-pub fn initialize_paging() {
+pub fn initialize_paging() -> Vec<Framebuffer> {
     let hhdm_offset = HHDM_REQUEST
         .get_response()
         .expect("Response should be provided by Limine.")
@@ -72,6 +78,12 @@ pub fn initialize_paging() {
         unsafe { OffsetPageTable::new(&mut *page_table_ptr, VirtAddr::new(hhdm_offset)) };
 
     map_hhdm(&mut offset_page_table, &mut frame_allocator);
+
+    // SAFETY: We have just mapped the HHDM in the line above.
+    unsafe {
+        DEBUG_FRAMEBUFFER.lock().override_addr(HHDM_OFFSET);
+    }
+
     map_kernel(&mut offset_page_table, &mut frame_allocator);
     map_stack(&mut offset_page_table, &mut frame_allocator);
     map_heap(&mut offset_page_table, &mut frame_allocator);
@@ -86,6 +98,77 @@ pub fn initialize_paging() {
             Cr3Flags::empty(),
         );
     }
+
+    // SAFETY: Allocator is initialized after page tables are setup.
+    unsafe {
+        init_allocator();
+    }
+
+    map_framebuffers(&mut offset_page_table, &mut frame_allocator)
+}
+
+fn map_framebuffers(
+    offset_page_table: &mut OffsetPageTable,
+    frame_allocator: &mut EarlyFrameAllocator,
+) -> Vec<Framebuffer> {
+    let mut framebuffers = vec![];
+
+    if let Some(response) = FRAMEBUFFER_REQUEST.get_response() {
+        let mut back_buffer_virt = Framebuffer::FRAMEBUFFER_BASE;
+
+        for framebuffer in response.framebuffers() {
+            let framebuffer_size = framebuffer.pitch() * framebuffer.height();
+
+            let new_framebuffer_virt = framebuffer.addr() as u64
+                - HHDM_REQUEST
+                    .get_response()
+                    .expect("Response should be provided by Limine.")
+                    .offset()
+                + HHDM_OFFSET;
+
+            // SAFETY: We will map the memory later in this loop (before the framebuffer vector is
+            // ever used) so the memory will be valid.
+            let new_framebuffer = unsafe {
+                Framebuffer::from_limine_framebuffer(
+                    &framebuffer,
+                    &mut *(back_buffer_virt as *mut u8),
+                    &mut *(new_framebuffer_virt as *mut u8),
+                )
+            };
+
+            // Allocate back buffer
+            let num_frames = framebuffer_size.div_ceil(0x1000);
+
+            for _ in 0..num_frames {
+                let frame = frame_allocator
+                    .allocate_frame()
+                    .unwrap_or_else(|| panic!("Out of memory when allocating back buffer!"));
+                // SAFETY: Address is only incremented by page size, backbuffer is only mapped
+                // once.
+                unsafe {
+                    offset_page_table
+                        .map_to(
+                            Page::from_start_address_unchecked(VirtAddr::new(back_buffer_virt)),
+                            frame,
+                            PageTableFlags::PRESENT
+                                | PageTableFlags::WRITABLE
+                                | PageTableFlags::NO_EXECUTE,
+                            frame_allocator,
+                        )
+                        .unwrap_or_else(|e| panic!("Failed to map back buffer! {e:#?}"))
+                        .flush();
+                }
+                back_buffer_virt += Size4KiB::SIZE;
+            }
+
+            // Guard page
+            back_buffer_virt += Size4KiB::SIZE;
+
+            framebuffers.push(new_framebuffer);
+        }
+    }
+
+    framebuffers
 }
 
 fn map_hhdm(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {

@@ -10,6 +10,7 @@ extern crate alloc;
 
 use crate::debug::serial;
 use crate::debug::text;
+use crate::trampoline::BootInfo;
 use core::{arch::asm, panic::PanicInfo};
 
 use crate::trampoline::{gdt, interrupts, limine_requests, memory};
@@ -33,11 +34,7 @@ extern "C" fn trampoline_main() -> ! {
     gdt::init();
     interrupts::init_idt();
 
-    memory::initialize_paging();
-    // SAFETY: this function is called after paging is set up.
-    unsafe {
-        memory::init_allocator();
-    }
+    let framebuffers = memory::initialize_paging();
 
     // SAFETY: this switches the kernel stack, but then we call kernel_main after, which never
     // returns. Execution effectively starts afresh in kernel_main.
@@ -48,11 +45,11 @@ extern "C" fn trampoline_main() -> ! {
         );
     }
 
-    kernel_main();
+    kernel_main(BootInfo { framebuffers });
 }
 
-extern "C" fn kernel_main() -> ! {
-    wordle::run();
+fn kernel_main(boot_info: BootInfo) -> ! {
+    wordle::run(boot_info);
 
     hcf();
 }
