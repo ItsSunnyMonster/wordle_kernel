@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use bevy::ecs::resource::Resource;
 use framebuffer::Framebuffer;
 
-use crate::trampoline::memory::ProperFrameAllocator;
+use crate::trampoline::memory::allocators::ProperFrameAllocator;
 
 pub mod framebuffer;
 pub mod gdt;
