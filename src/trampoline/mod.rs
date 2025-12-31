@@ -10,6 +10,7 @@ use crate::trampoline::memory::allocators::ProperFrameAllocator;
 
 pub mod framebuffer;
 pub mod gdt;
+pub mod happy_new_year;
 pub mod interrupts;
 pub mod limine_requests;
 pub mod memory;
