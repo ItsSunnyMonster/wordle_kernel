@@ -10,6 +10,8 @@ extern crate alloc;
 
 use x86_64::VirtAddr;
 use x86_64::structures::paging::OffsetPageTable;
+use x86_64::structures::paging::PageSize;
+use x86_64::structures::paging::Size4KiB;
 
 use crate::debug::serial;
 use crate::debug::text;
@@ -55,7 +57,7 @@ extern "C" fn trampoline_main() -> ! {
     unsafe {
         asm!(
             "mov rsp, {0}",
-            in(reg) memory::STACK_BASE + memory::STACK_SIZE,
+            in(reg) memory::STACK_BASE.start_address().as_u64() + memory::STACK_PAGES * Size4KiB::SIZE,
         );
     }
 

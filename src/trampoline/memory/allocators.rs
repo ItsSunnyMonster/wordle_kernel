@@ -7,35 +7,37 @@ use alloc::vec::Vec;
 use limine::memory_map::EntryType;
 use x86_64::{
     PhysAddr,
-    structures::paging::{FrameAllocator, PageSize, PhysFrame, Size4KiB},
+    structures::paging::{FrameAllocator, PageSize, PhysFrame, Size4KiB, frame::PhysFrameRange},
 };
 
 use crate::trampoline::{
     limine_requests::MEMMAP_REQUEST,
-    memory::{ALLOCATOR, HEAP_BASE, HEAP_SIZE},
+    memory::{ALLOCATOR, HEAP_BASE, HEAP_PAGES},
 };
 
 /// # Safety
 /// This function should only be called after the heap has been mapped.
 pub unsafe fn init_allocator() {
     unsafe {
-        ALLOCATOR
-            .lock()
-            .init(HEAP_BASE as *mut u8, HEAP_SIZE as usize);
+        ALLOCATOR.lock().init(
+            HEAP_BASE.start_address().as_u64() as *mut u8,
+            HEAP_PAGES as usize * Size4KiB::SIZE as usize,
+        );
     }
 }
 
 // This allocator completely ignores reclaimable memory. It only allocates from USABLE
 pub struct EarlyFrameAllocator {
     memmap_index: usize,
-    next_frame: PhysAddr,
+    next_frame: PhysFrame,
 }
 
 impl EarlyFrameAllocator {
     pub fn new() -> Self {
         Self {
             memmap_index: 0,
-            next_frame: PhysAddr::zero(),
+            // SAFETY: Zero address should be correctly aligned.
+            next_frame: unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::zero()) },
         }
     }
 }
@@ -63,42 +65,50 @@ unsafe impl FrameAllocator<Size4KiB> for EarlyFrameAllocator {
             }
 
             // If the next_frame pointer is after the current region, move on to the next region.
-            if self.next_frame.as_u64() >= entry.base + entry.length {
+            if self.next_frame.start_address().as_u64() >= entry.base + entry.length {
                 self.memmap_index += 1;
                 continue;
             }
 
             // Before the current region in the memory map.
-            if self.next_frame.as_u64() < entry.base {
-                self.next_frame = PhysAddr::new(entry.base);
+            if self.next_frame.start_address().as_u64() < entry.base {
+                self.next_frame =
+                    // SAFETY: Address returned by limine memmap should be properly aligned.
+                    unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::new(entry.base)) };
             }
 
             // Allocate one page
-            self.next_frame += 0x1000;
-            // SAFETY: USABLE entry bases are guaranteed to be page aligned; adding 0x1000 to any
-            // page aligned address yields a page aligned result; 0x0 is page aligned.
-            return Some(unsafe {
-                PhysFrame::from_start_address_unchecked(self.next_frame - 0x1000)
-            });
+            self.next_frame += 1;
+            return Some(self.next_frame - 1);
         }
 
         None
     }
 }
 
-pub struct AddressRange(u64, u64);
-
 pub struct ProperFrameAllocator {
-    availables: Vec<AddressRange>,
+    availables: Vec<PhysFrameRange>,
+}
+
+/// # SAFETY
+/// The caller must ensure the base and the size are properly aligned.
+unsafe fn address_range_unchecked<S: PageSize>(base: u64, size: u64) -> PhysFrameRange<S> {
+    // SAFETY: Caller ensures address and size are properly aligned.
+    unsafe {
+        PhysFrameRange {
+            start: PhysFrame::from_start_address_unchecked(PhysAddr::new(base)),
+            end: PhysFrame::from_start_address_unchecked(PhysAddr::new(base + size)),
+        }
+    }
 }
 
 impl ProperFrameAllocator {
-    fn push_range(availables: &mut Vec<AddressRange>, range: AddressRange) {
+    fn push_range(availables: &mut Vec<PhysFrameRange>, range: PhysFrameRange) {
         // If the last range ends the same as the new range's start, we can merge them
         if let Some(last) = availables.last_mut()
-            && last.1 == range.0
+            && last.end == range.start
         {
-            last.1 = range.1;
+            last.end = range.end;
             return;
         }
 
@@ -117,36 +127,39 @@ impl ProperFrameAllocator {
             match entry.entry_type {
                 // Early frame allocator does not allocate from reclaimable memory
                 EntryType::BOOTLOADER_RECLAIMABLE | EntryType::ACPI_RECLAIMABLE => {
-                    Self::push_range(
-                        &mut availables,
-                        AddressRange(entry.base, entry.base + entry.length),
-                    );
+                    // SAFETY: memmap entries by Limine should be aligned.
+                    Self::push_range(&mut availables, unsafe {
+                        address_range_unchecked(entry.base, entry.length)
+                    });
                 }
                 // Only usable sections that haven't been touched by the early frame allocator can
                 // be used.
                 EntryType::USABLE => {
                     // The next frame pointer has already moved past this USABLE section
-                    if entry.base + entry.length <= early_frame_allocator.next_frame.as_u64() {
+                    if entry.base + entry.length
+                        <= early_frame_allocator.next_frame.start_address().as_u64()
+                    {
                         continue;
                     }
 
                     // The next frame pointer is inside this USABLE section
-                    if early_frame_allocator.next_frame.as_u64() >= entry.base {
-                        Self::push_range(
-                            &mut availables,
-                            AddressRange(
-                                early_frame_allocator.next_frame.as_u64(),
-                                entry.base + entry.length,
-                            ),
-                        );
+                    if early_frame_allocator.next_frame.start_address().as_u64() >= entry.base {
+                        // SAFETY: Frame address must be aligned, length from Limine should be
+                        // aligned.
+                        Self::push_range(&mut availables, unsafe {
+                            address_range_unchecked(
+                                early_frame_allocator.next_frame.start_address().as_u64(),
+                                entry.length,
+                            )
+                        });
                         continue;
                     }
 
                     // The next frame pointer is before this USABLE section
-                    Self::push_range(
-                        &mut availables,
-                        AddressRange(entry.base, entry.base + entry.length),
-                    );
+                    // SAFETY: Addresses from Limine memmap should be aligned.
+                    Self::push_range(&mut availables, unsafe {
+                        address_range_unchecked(entry.base, entry.length)
+                    });
                 }
                 _ => {}
             }
@@ -156,24 +169,27 @@ impl ProperFrameAllocator {
     }
 }
 
+// SAFETY: This allocator builds a list of available regions based on the state of the
+// EarlyFrameAllocator which existed prior. It only allocates from available regions.
 unsafe impl<S: PageSize> FrameAllocator<S> for ProperFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame<S>> {
         let mut additional_range = None;
         let mut frame_start = None;
 
         'outer: for range in &mut self.availables {
-            let mut start = range.0;
+            let mut start = range.start;
 
-            while range.1 - start >= S::SIZE {
-                let align_mask = !(S::SIZE - 1);
+            while range.end - start >= S::SIZE / Size4KiB::SIZE {
+                if start.start_address().is_aligned(S::SIZE) {
+                    let range_end = range.end;
+                    range.end = start;
 
-                // The address is aligned
-                if start & align_mask == start {
-                    let range_end = range.1;
-                    range.1 = start;
-
-                    if start + S::SIZE < range_end {
-                        additional_range = Some(AddressRange(start + S::SIZE, range_end));
+                    // If allocating 1 frame results in left-over space
+                    if start + S::SIZE / Size4KiB::SIZE < range_end {
+                        additional_range = Some(PhysFrameRange {
+                            start: start + S::SIZE / Size4KiB::SIZE,
+                            end: range_end,
+                        });
                     }
 
                     frame_start = Some(start);
@@ -181,7 +197,7 @@ unsafe impl<S: PageSize> FrameAllocator<S> for ProperFrameAllocator {
                     break 'outer;
                 }
 
-                start += Size4KiB::SIZE;
+                start += 1;
             }
         }
 
@@ -193,7 +209,7 @@ unsafe impl<S: PageSize> FrameAllocator<S> for ProperFrameAllocator {
         }
 
         frame_start.map(|a| {
-            PhysFrame::from_start_address(PhysAddr::new(a))
+            PhysFrame::from_start_address(a.start_address())
                 .expect("Address should always be correctly aligned.")
         })
     }

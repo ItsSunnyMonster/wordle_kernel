@@ -22,11 +22,13 @@ use x86_64::{
 use crate::{
     debug::rendering::DEBUG_FRAMEBUFFER,
     limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST},
+    serial_println,
     trampoline::{
         framebuffer::Framebuffer,
         limine_requests::FRAMEBUFFER_REQUEST,
         memory::allocators::{EarlyFrameAllocator, ProperFrameAllocator, init_allocator},
     },
+    util::page_from_addr,
 };
 
 // Linker symbols placed at the boundaries of kernel sections
@@ -44,11 +46,10 @@ unsafe extern "C" {
 
 pub const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
 
-// These must be 0x1000 aligned.
-pub const STACK_BASE: u64 = 0x4888_8888_0000;
-pub const STACK_SIZE: u64 = 0x1000 * 16; // 64KiB
-pub const HEAP_BASE: u64 = 0x4444_4444_0000;
-pub const HEAP_SIZE: u64 = 0x1000 * 25; // 100KiB
+pub const STACK_BASE: Page<Size4KiB> = page_from_addr(0x4888_8888_0000);
+pub const STACK_PAGES: u64 = 16; // 64KiB
+pub const HEAP_BASE: Page<Size4KiB> = page_from_addr(0x4444_4444_0000);
+pub const HEAP_PAGES: u64 = 25; // 100KiB
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -120,7 +121,7 @@ pub fn map_framebuffers(
     let mut framebuffers = vec![];
 
     if let Some(response) = FRAMEBUFFER_REQUEST.get_response() {
-        let mut back_buffer_virt = Framebuffer::FRAMEBUFFER_BASE;
+        let mut back_buffer_page = Framebuffer::FRAMEBUFFER_BASE;
 
         for framebuffer in response.framebuffers() {
             let framebuffer_size = framebuffer.pitch() * framebuffer.height();
@@ -137,7 +138,7 @@ pub fn map_framebuffers(
             let new_framebuffer = unsafe {
                 Framebuffer::from_limine_framebuffer(
                     &framebuffer,
-                    &mut *(back_buffer_virt as *mut u8),
+                    &mut *(back_buffer_page.start_address().as_u64() as *mut u8),
                     &mut *(new_framebuffer_virt as *mut u8),
                 )
             };
@@ -145,18 +146,16 @@ pub fn map_framebuffers(
             // Allocate back buffer
             let num_frames = framebuffer_size.div_ceil(Size2MiB::SIZE);
 
-            for _ in 0..num_frames {
+            for i in 0..num_frames {
+                serial_println!("{i}");
                 let frame: PhysFrame<Size2MiB> = frame_allocator
                     .allocate_frame()
                     .unwrap_or_else(|| panic!("Out of memory when allocating back buffer!"));
-                // SAFETY: Address is only incremented by page size, backbuffer is only mapped
-                // once.
+                // SAFETY: Back buffers are only mapped once.
                 unsafe {
                     offset_page_table
                         .map_to(
-                            Page::from_start_address(VirtAddr::new(back_buffer_virt)).expect(
-                                "Framebuffer addresses are only incremented by 2MiB at a time.",
-                            ),
+                            back_buffer_page,
                             frame,
                             PageTableFlags::PRESENT
                                 | PageTableFlags::HUGE_PAGE
@@ -167,11 +166,12 @@ pub fn map_framebuffers(
                         .unwrap_or_else(|e| panic!("Failed to map back buffer! {e:#?}"))
                         .flush();
                 }
-                back_buffer_virt += Size2MiB::SIZE;
+                // Page increments by increments of its page size.
+                back_buffer_page += 1;
             }
 
             // Guard page + alignment
-            back_buffer_virt += Size2MiB::SIZE;
+            back_buffer_page += 1;
 
             framebuffers.push(new_framebuffer);
         }
@@ -285,7 +285,7 @@ fn map_kernel(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Ear
 
 fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
     // i represents number of pages
-    for i in 0u64..STACK_SIZE / 0x1000 {
+    for i in 0u64..STACK_PAGES {
         let frame = frame_allocator
             .allocate_frame()
             .unwrap_or_else(|| panic!("Out of memory while allocating frames for stack."));
@@ -293,7 +293,7 @@ fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Earl
         // SAFETY: Stack is only mapped once.
         let result = unsafe {
             offset_page_table.map_to(
-                Page::from_start_address_unchecked(VirtAddr::new(STACK_BASE + i * 0x1000)),
+                STACK_BASE + i,
                 frame,
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
                 frame_allocator,
@@ -312,7 +312,7 @@ fn map_stack(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Earl
 
 fn map_heap(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut EarlyFrameAllocator) {
     // i represents number of pages
-    for i in 0u64..HEAP_SIZE / 0x1000 {
+    for i in 0u64..HEAP_PAGES {
         let frame = frame_allocator
             .allocate_frame()
             .unwrap_or_else(|| panic!("Out of memory while allocating frames for heap."));
@@ -320,7 +320,7 @@ fn map_heap(offset_page_table: &mut OffsetPageTable, frame_allocator: &mut Early
         // SAFETY: Heap is only mapped once.
         let result = unsafe {
             offset_page_table.map_to(
-                Page::from_start_address_unchecked(VirtAddr::new(HEAP_BASE + i * 0x1000)),
+                HEAP_BASE + i,
                 frame,
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
                 frame_allocator,
@@ -388,10 +388,9 @@ unsafe fn map_range(
             && phys.is_aligned(Size1GiB::SIZE)
             && virt + Size1GiB::SIZE <= end
         {
-            let page = Page::<Size1GiB>::from_start_address(virt)
-                .expect("Alignment was checked in if statement.");
-            let frame = PhysFrame::<Size1GiB>::from_start_address(phys)
-                .expect("Alignment was checked in if statement.");
+            // SAFETY: Alignment was checked in if statement.
+            let page = unsafe { Page::<Size1GiB>::from_start_address_unchecked(virt) };
+            let frame = unsafe { PhysFrame::<Size1GiB>::from_start_address_unchecked(phys) };
 
             // SAFETY: the caller should verify that no invariants are broken by their new memory
             // layout.
@@ -415,10 +414,9 @@ unsafe fn map_range(
             && phys.is_aligned(Size2MiB::SIZE)
             && virt + Size2MiB::SIZE <= end
         {
-            let page = Page::<Size2MiB>::from_start_address(virt)
-                .expect("Alignment was checked in if statement.");
-            let frame = PhysFrame::<Size2MiB>::from_start_address(phys)
-                .expect("Alignment was checked in if statement.");
+            // SAFETY: Alignment was checked in if statement.
+            let page = unsafe { Page::<Size2MiB>::from_start_address_unchecked(virt) };
+            let frame = unsafe { PhysFrame::<Size2MiB>::from_start_address_unchecked(phys) };
 
             // SAFETY: the caller should verify that no invariants are broken by their new memory
             // layout.
