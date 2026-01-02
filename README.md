@@ -16,6 +16,4 @@ Install `just`:
 cargo install just
 ```
 
-Edit `justfile`, and change `i686-elf-grub-mkrescue` to your `grub-mkrescue` executable
-
-Run `justfile run`
+Run `justfile run-bios` or `justfile run-uefi`
