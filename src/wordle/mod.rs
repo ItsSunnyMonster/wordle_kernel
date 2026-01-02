@@ -20,10 +20,8 @@ pub fn run(boot_info: BootInfo) {
 }
 
 fn hello_world(mut boot_info: ResMut<BootInfo>) {
-    serial_println!("Hello World!");
     boot_info.framebuffers[0]
         .clear(COLOR_SCHEME.background())
         .infallible();
     boot_info.framebuffers[0].flush();
-    serial_println!("After clear");
 }

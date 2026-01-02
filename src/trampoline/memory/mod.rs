@@ -146,8 +146,7 @@ pub fn map_framebuffers(
             // Allocate back buffer
             let num_frames = framebuffer_size.div_ceil(Size2MiB::SIZE);
 
-            for i in 0..num_frames {
-                serial_println!("{i}");
+            for _ in 0..num_frames {
                 let frame: PhysFrame<Size2MiB> = frame_allocator
                     .allocate_frame()
                     .unwrap_or_else(|| panic!("Out of memory when allocating back buffer!"));
