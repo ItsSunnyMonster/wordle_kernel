@@ -9,10 +9,7 @@ use embedded_graphics::{
     pixelcolor::Rgb888,
     prelude::{DrawTarget, OriginDimensions, RgbColor, Size},
 };
-use x86_64::{
-    PhysAddr, VirtAddr,
-    structures::paging::{Page, PageSize, PhysFrame, Size2MiB},
-};
+use x86_64::structures::paging::{Page, Size2MiB};
 
 use crate::util::page_from_addr;
 

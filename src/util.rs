@@ -20,7 +20,7 @@ impl<T> InfallibleResultExt<T> for Result<T, Infallible> {
 }
 
 pub const fn page_from_addr<S: PageSize>(addr: u64) -> Page<S> {
-    assert!(addr % S::SIZE == 0);
+    assert!(addr.is_multiple_of(S::SIZE));
     // SAFETY: Alignment asserted in previous line.
     unsafe { Page::from_start_address_unchecked(VirtAddr::new(addr)) }
 }

@@ -23,6 +23,7 @@ use core::{arch::asm, panic::PanicInfo};
 
 use crate::trampoline::{gdt, interrupts, limine_requests, memory};
 
+mod color;
 mod debug;
 mod trampoline;
 mod util;

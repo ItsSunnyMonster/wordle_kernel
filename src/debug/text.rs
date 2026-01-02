@@ -12,7 +12,11 @@ use embedded_graphics::{
 };
 use spin::Mutex;
 
-use crate::{debug::rendering::DEBUG_FRAMEBUFFER, util::InfallibleResultExt};
+use crate::{
+    color::{COLOR_SCHEME, ColorScheme},
+    debug::rendering::DEBUG_FRAMEBUFFER,
+    util::InfallibleResultExt,
+};
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -27,7 +31,7 @@ pub struct DebugWriter {
 impl DebugWriter {
     pub fn new() -> Self {
         Self {
-            style: MonoTextStyle::new(&FONT_9X18_BOLD, Rgb888::new(243, 139, 168)),
+            style: MonoTextStyle::new(&FONT_9X18_BOLD, COLOR_SCHEME.error_foreground()),
             position: Point::new(20, 30),
         }
     }

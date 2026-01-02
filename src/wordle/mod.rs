@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use bevy::prelude::*;
-use embedded_graphics::{
-    pixelcolor::Rgb888,
-    prelude::{DrawTarget, RgbColor},
-};
+use embedded_graphics::prelude::DrawTarget;
 
-use crate::{serial_println, trampoline::BootInfo, util::InfallibleResultExt};
+use crate::{
+    color::{COLOR_SCHEME, ColorScheme},
+    serial_println,
+    trampoline::BootInfo,
+    util::InfallibleResultExt,
+};
 
 pub fn run(boot_info: BootInfo) {
     App::new()
@@ -19,7 +21,9 @@ pub fn run(boot_info: BootInfo) {
 
 fn hello_world(mut boot_info: ResMut<BootInfo>) {
     serial_println!("Hello World!");
-    boot_info.framebuffers[0].clear(Rgb888::BLUE).infallible();
+    boot_info.framebuffers[0]
+        .clear(COLOR_SCHEME.background())
+        .infallible();
     boot_info.framebuffers[0].flush();
     serial_println!("After clear");
 }
