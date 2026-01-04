@@ -7,7 +7,6 @@ use embedded_graphics::prelude::DrawTarget;
 
 use crate::{
     color::{COLOR_SCHEME, ColorScheme},
-    serial_println,
     trampoline::BootInfo,
     util::InfallibleResultExt,
 };

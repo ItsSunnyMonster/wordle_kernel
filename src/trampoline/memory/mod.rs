@@ -22,7 +22,6 @@ use x86_64::{
 use crate::{
     debug::rendering::DEBUG_FRAMEBUFFER,
     limine_requests::{EXECUTABLE_ADDRESS_REQUEST, HHDM_REQUEST, MEMMAP_REQUEST},
-    serial_println,
     trampoline::{
         framebuffer::Framebuffer,
         limine_requests::FRAMEBUFFER_REQUEST,

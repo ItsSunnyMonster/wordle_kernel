@@ -1,33 +1,26 @@
 #![no_std]
 #![no_main]
-#![feature(abi_x86_interrupt)]
 
-// SPDX-FileCopyrightText: 2025 SunnyMonster
+// SPDX-FileCopyrightText: 2026 SunnyMonster
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-extern crate alloc;
-
-use x86_64::VirtAddr;
-use x86_64::structures::paging::OffsetPageTable;
-use x86_64::structures::paging::PageSize;
-use x86_64::structures::paging::Size4KiB;
-
-use crate::debug::serial;
-use crate::debug::text;
-use crate::trampoline::BootInfo;
-use crate::trampoline::memory::HHDM_OFFSET;
-use crate::trampoline::memory::get_pagetable;
-use crate::trampoline::memory::map_framebuffers;
 use core::{arch::asm, panic::PanicInfo};
 
-use crate::trampoline::{gdt, interrupts, limine_requests, memory};
+use wordle_kernel::{
+    hcf, kernel_main,
+    trampoline::{
+        BootInfo, gdt, interrupts, limine_requests,
+        memory::{self, HHDM_OFFSET, get_pagetable, map_framebuffers},
+    },
+};
+use x86_64::{
+    VirtAddr,
+    structures::paging::{OffsetPageTable, PageSize, Size4KiB},
+};
 
-mod color;
-mod debug;
-mod trampoline;
-mod util;
-mod wordle;
+#[macro_use]
+extern crate wordle_kernel;
 
 /// # Setup order
 /// 1. Exception handling
@@ -68,21 +61,9 @@ extern "C" fn trampoline_main() -> ! {
     });
 }
 
-fn kernel_main(boot_info: BootInfo) -> ! {
-    wordle::run(boot_info);
-
-    hcf();
-}
-
 #[panic_handler]
 fn rust_panic(info: &PanicInfo) -> ! {
     eprintln!("{}", info);
     serial_println!("{}", info);
     hcf();
-}
-
-fn hcf() -> ! {
-    loop {
-        x86_64::instructions::hlt();
-    }
 }

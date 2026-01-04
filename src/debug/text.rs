@@ -65,6 +65,12 @@ impl DebugWriter {
     }
 }
 
+impl Default for DebugWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Write for DebugWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.write(s);
@@ -74,7 +80,7 @@ impl fmt::Write for DebugWriter {
 
 #[macro_export]
 macro_rules! eprint {
-    ($($arg:tt)*) => ($crate::text::_print(format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::debug::text::_print(format_args!($($arg)*)));
 }
 
 #[macro_export]
