@@ -16,6 +16,9 @@ bevy = { version = "0.17.3", default-features = false, features = [
 ] }
 catppuccin = { git = "https://github.com/ItsSunnyMonster/catppuccin-rust.git" }
 
+[profile.dev]
+panic = "abort"
+
 [profile.kernel]
 inherits = "release"
 opt-level = "s"
